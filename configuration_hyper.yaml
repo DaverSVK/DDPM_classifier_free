@@ -1,0 +1,38 @@
+model:
+  name: "UNet2DModel"
+  sample_size: 256
+  in_channels: 3
+  out_channels: 3
+  layers_per_block: 2
+  block_out_channels: [ 32, 64, 128, 256, 512] # must match numbet of layers
+  down_block_types: # possible configurations listed in diffusers library
+    - "DownBlock2D"
+    - "DownBlock2D"
+    - "AttnDownBlock2D"
+    - "DownBlock2D"
+    - "DownBlock2D"
+  mid_block_type:
+    - "UNetMidBlock2D"
+    - "UNetMidBlock2D"
+    - "UNetMidBlock2D"
+  up_block_types:
+    - "UpBlock2D"
+    - "UpBlock2D"
+    - "AttnUpBlock2D"
+    - "UpBlock2D"
+    - "UpBlock2D"
+  norm_num_groups: 4
+  dropout_scale: 0.08
+  cross_attention_dim: 768 # This is for conditioned model
+
+training:
+  epochs: 1001
+  batch_size: 20
+  learning_rate: 0.0001
+  diff_time_step: 1000
+  beta_end: 0.02
+  beta_start: 0.0001
+  beta_scheduler: "linear"
+
+general:
+  image_size: 256
