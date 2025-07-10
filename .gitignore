@@ -1,0 +1,9 @@
+#ignore local virtual enviroment
+venv/
+
+#ignore local data
+DDR/
+CSave.py
+
+#ignore trained models for clear repo
+diffusion_model*/
