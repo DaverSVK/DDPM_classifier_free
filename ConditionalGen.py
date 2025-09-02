@@ -42,7 +42,7 @@ PER_CLASS_GUIDANCE: Dict[int, float] = {
 MODEL_RUNS = [
     {
         "name": "ModelSGD1",
-        "checkpoint": "TraniOutputs/diffusion_model-2025-08-28-19-47/ckpt_epoch_699.pt",
+        "checkpoint": "TraniOutputs/diffusion_model-2025-08-28-19-47/ckpt_epoch_999.pt",
         "guidance_scale": 0,
     },
         {

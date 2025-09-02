@@ -26,9 +26,9 @@ def train_model(
     image_size,
     num_classes,
     guidance_scale,
-    scheduler=None, 
-    steps_per_epoch=None
-    
+    lr_scheduler=None,
+    start_epoch=0,
+    plateau_metric="train_loss"
 ):
     epoch_times, epoch_loss, fid_scores = [], [], []
     best_FID = 1e8
@@ -40,6 +40,7 @@ def train_model(
         model.train()
         
         total_loss, num_batches = 0.0, 0
+        running_loss = 0.0
 
         for batch_imgs, batch_lbls in pbar:
             timesteps = torch.randint(0,
@@ -62,21 +63,25 @@ def train_model(
             accelerator.backward(loss)
             optimizer.step()
 
-            if scheduler is not None:
-                scheduler.step()  # per-step update
+            running_loss += float(loss.detach().item())
+            num_batches += 1
+            avg_loss = running_loss / num_batches
+            pbar.set_postfix({"loss": f"{avg_loss:.6f}"})
 
             global_step += 1
 
-            # (optional) log current LR
-            if scheduler is not None and steps_per_epoch:
-                curr_lr = optimizer.param_groups[0]["lr"]
-                accelerator.print(f"Epoch {epoch+1}/{num_epochs} — lr={curr_lr:.8f}")
-            total_loss += float(loss.detach().item())
-            num_batches += 1
-            pbar.set_postfix({"loss": total_loss / num_batches})
+        epoch_time = time.time() - epoch_start
+        epoch_avg_loss = running_loss / max(1, num_batches)
 
         epoch_times.append(time.time() - epoch_start)
         epoch_loss.append(loss.item())
+        
+        if lr_scheduler is not None:
+            metric_value = epoch_avg_loss  
+            lr_scheduler.step(metric_value)
+
+        current_lr = optimizer.param_groups[0]["lr"] if optimizer.param_groups else float("nan")
+
 
         if (epoch + 1) % 50 == 0:
             save_model_path_per = f"{folder_path}/ckpt_epoch_{epoch:03d}.pt"
@@ -109,7 +114,7 @@ def train_model(
         fid_scores.append(0)
         if accelerator.is_main_process:
             with open(f"{folder_path}/epoch_times.txt", "a") as f:
-                f.write(f"Epoch {epoch+1}: {epoch_times[-1]:.2f} sec, {epoch_loss[-1]:.6f} loss, {fid_scores[-1]:.2f} FID, {curr_lr:.6f} LR\n")
+                f.write(f"Epoch {epoch+1}: {epoch_times[-1]:.2f} sec, {epoch_loss[-1]:.6f} loss, {fid_scores[-1]:.2f} FID, {current_lr:.6f} LR\n")
 
     if accelerator.is_main_process:
         torch.save({

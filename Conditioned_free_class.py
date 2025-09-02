@@ -6,6 +6,9 @@ import datetime
 import yaml
 from accelerate import Accelerator
 from diffusers import UNet2DConditionModel, DDPMScheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+
 
 from data_loader import get_data_loader
 from collections import OrderedDict
@@ -54,6 +57,14 @@ def main():
     
     lr_start = float(training_config.get("lr_start", 0.02))
     lr_end = float(training_config.get("lr_end", 0.0001))
+    lr_start   = float(training_config.get("lr_start", 2e-2))
+    lr_min     = float(training_config.get("lr_min",   1e-4))
+    lr_factor  = float(training_config.get("lr_factor", 0.5))
+    lr_patience= int(training_config.get("lr_patience", 5))
+    lr_thresh  = float(training_config.get("lr_threshold", 1e-3))
+    lr_cooldown= int(training_config.get("lr_cooldown", 0))
+    lr_mode    = training_config.get("lr_mode", "min")  # 'min' for loss
+
 
     train_dir = "./DDR/filtered_procesed_train"
     labels_file = "./DDR/filtered_train.txt"
@@ -141,7 +152,17 @@ def main():
 
         return lr_now / lr_start
 
-    
+    plateau_scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode=lr_mode,                # 'min' if you pass a loss
+        factor=lr_factor,            # LR_new = LR * factor
+        patience=lr_patience,
+        threshold=lr_thresh,
+        threshold_mode="rel",        # relative improvement
+        cooldown=lr_cooldown,
+        min_lr=lr_min,
+        # verbose=True                 # prints reductions
+    )
 
     scheduler = LambdaLR(
         optimizer,
@@ -162,8 +183,8 @@ def main():
         image_size,
         num_classes,
         guidance_scale,
-        scheduler=scheduler,
-        steps_per_epoch=steps_per_epoch
+        lr_scheduler=None, 
+        start_epoch=0
     )
 
 if __name__ == "__main__":

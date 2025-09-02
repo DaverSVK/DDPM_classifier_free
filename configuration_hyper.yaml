@@ -35,5 +35,10 @@ training:
   beta_scheduler: "linear"
   lr_start: 0.02
   lr_end: 0.0001
+  lr_factor: 0.5        
+  lr_patience: 5        
+  lr_threshold: 1.0e-3  
+  lr_cooldown: 0        
+  lr_mode: "min"        
 general:
   image_size: 256
