@@ -28,11 +28,12 @@ model:
 training:
   epochs: 1001
   batch_size: 20
-  learning_rate: 0.0001
+  learning_rate: 0.01
   diff_time_step: 1000
   beta_end: 0.02
   beta_start: 0.0001
   beta_scheduler: "linear"
-
+  lr_start: 0.02
+  lr_end: 0.0001
 general:
   image_size: 256

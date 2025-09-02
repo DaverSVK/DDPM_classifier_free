@@ -25,15 +25,21 @@ def train_model(
     folder_path,
     image_size,
     num_classes,
-    guidance_scale
+    guidance_scale,
+    scheduler=None, 
+    steps_per_epoch=None
+    
 ):
     epoch_times, epoch_loss, fid_scores = [], [], []
     best_FID = 1e8
-
+    curr_lr = 0.02
+    global_step = 0
     for epoch in range(num_epochs):
         epoch_start = time.time()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", disable=not accelerator.is_local_main_process)
         model.train()
+        
+        total_loss, num_batches = 0.0, 0
 
         for batch_imgs, batch_lbls in pbar:
             timesteps = torch.randint(0,
@@ -56,12 +62,23 @@ def train_model(
             accelerator.backward(loss)
             optimizer.step()
 
-            pbar.set_postfix({"loss": loss.item()})
+            if scheduler is not None:
+                scheduler.step()  # per-step update
+
+            global_step += 1
+
+            # (optional) log current LR
+            if scheduler is not None and steps_per_epoch:
+                curr_lr = optimizer.param_groups[0]["lr"]
+                accelerator.print(f"Epoch {epoch+1}/{num_epochs} — lr={curr_lr:.8f}")
+            total_loss += float(loss.detach().item())
+            num_batches += 1
+            pbar.set_postfix({"loss": total_loss / num_batches})
 
         epoch_times.append(time.time() - epoch_start)
         epoch_loss.append(loss.item())
 
-        if (epoch + 1) % 100 == 0:
+        if (epoch + 1) % 50 == 0:
             save_model_path_per = f"{folder_path}/ckpt_epoch_{epoch:03d}.pt"
             torch.save(
                 {
@@ -71,28 +88,28 @@ def train_model(
                 },
                 save_model_path_per,
             )
-            epoch_folder = generate_image(
-                model, label_emb, image_size, noise_scheduler,
-                folder_path, epoch, accelerator.device,
-                num_classes=num_classes,
-                guidance_scale=guidance_scale
-            )
-            fid_value = calculateFID(epoch_folder, "./dataresized", device=accelerator.device)
-            fid_scores.append(fid_value)
+            # epoch_folder = generate_image(
+            #     model, label_emb, image_size, noise_scheduler,
+            #     folder_path, epoch, accelerator.device,
+            #     num_classes=num_classes,
+            #     guidance_scale=guidance_scale
+            # )
+            # fid_value = calculateFID(epoch_folder, "./dataresized", device=accelerator.device)
+            # fid_scores.append(fid_value)
 
-            if accelerator.is_main_process:
-                if fid_value < best_FID:
-                    best_FID = fid_value
-                    torch.save({
-                        'model_state_dict': accelerator.unwrap_model(model).state_dict(),
-                        'label_emb_state_dict': accelerator.unwrap_model(label_emb).state_dict()
-                    }, f"{folder_path}/diffusion_model_best.pth")
+            # if accelerator.is_main_process:
+            #     if fid_value < best_FID:
+            #         best_FID = fid_value
+            #         torch.save({
+            #             'model_state_dict': accelerator.unwrap_model(model).state_dict(),
+            #             'label_emb_state_dict': accelerator.unwrap_model(label_emb).state_dict()
+            #         }, f"{folder_path}/diffusion_model_best.pth")
         else:
-            fid_scores.append(0)
-
+            print("")
+        fid_scores.append(0)
         if accelerator.is_main_process:
             with open(f"{folder_path}/epoch_times.txt", "a") as f:
-                f.write(f"Epoch {epoch+1}: {epoch_times[-1]:.2f} sec, {epoch_loss[-1]:.6f} loss, {fid_scores[-1]:.2f} FID\n")
+                f.write(f"Epoch {epoch+1}: {epoch_times[-1]:.2f} sec, {epoch_loss[-1]:.6f} loss, {fid_scores[-1]:.2f} FID, {curr_lr:.6f} LR\n")
 
     if accelerator.is_main_process:
         torch.save({
