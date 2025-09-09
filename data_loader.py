@@ -67,13 +67,16 @@ def get_data_loader(train_dir, labels_file, image_size, batch_size):
         num_samples=len(sample_weights),
         replacement=True                    
     )
-
+    
+    cpu_cores = os.cpu_count() or 8
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        sampler=sampler,                    
-        num_workers=0,
-        pin_memory=True
+        sampler=sampler,                   # keep your sampler (don’t set shuffle when sampler is used)
+        num_workers=min(max(cpu_cores - 2, 8), 16),  # usually 8–16 is best; start at 8 and bump up
+        pin_memory=True,                   # keep this on
+        persistent_workers=True,           # keep workers alive across epochs
+        prefetch_factor=4,                 # each worker preloads 4 batches
     )
 
     return train_loader, num_classes
