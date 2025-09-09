@@ -4,31 +4,40 @@ model:
   in_channels: 3
   out_channels: 3
   layers_per_block: 2
-  block_out_channels: [ 32, 64, 128, 256, 512] # must match numbet of layers
-  down_block_types: # possible configurations listed in diffusers library
-    - "DownBlock2D"
-    - "DownBlock2D"
-    - "AttnDownBlock2D"
-    - "DownBlock2D"
-    - "DownBlock2D"
-  mid_block_type:
-    - "UNetMidBlock2D"
-    - "UNetMidBlock2D"
-    - "UNetMidBlock2D"
+  block_out_channels: [128, 128, 128, 256, 256, 256] # must match numbet of layers
+  # Encoder
+  down_block_types:
+    - 'DownBlock2D'       # 128 
+    - 'DownBlock2D'       # 128
+    - 'DownBlock2D'       # 128
+    - 'AttnDownBlock2D'   # 256 
+    - 'AttnDownBlock2D'   # 256
+    - 'DownBlock2D'       # 256 
+
+  # Bottleneck (mid)
+  mid_block_type: 'UNetMidBlock2DCrossAttn'  
+  attention_head_dim: 8        
+
+  # Decoder (mirror attention placement symmetrically)
   up_block_types:
-    - "UpBlock2D"
-    - "UpBlock2D"
-    - "AttnUpBlock2D"
-    - "UpBlock2D"
-    - "UpBlock2D"
+    - 'UpBlock2D'         # 256
+    - 'AttnUpBlock2D'     # 256 
+    - 'AttnUpBlock2D'     # 256 
+    - 'UpBlock2D'         # 128
+    - 'UpBlock2D'         # 128
+    - 'UpBlock2D'         # 128
+
   norm_num_groups: 4
   dropout_scale: 0.08
-  cross_attention_dim: 768 # This is for conditioned model
+  cross_attention_dim: 512 # This is for conditioned model
+  class_embed_type: 'simple'   # simple learnable class embeddings
+  num_class_embeds: 5
+
 
 training:
   epochs: 1001
   batch_size: 20
-  learning_rate: 0.01
+  learning_rate: 0.0001
   diff_time_step: 1000
   beta_end: 0.02
   beta_start: 0.0001

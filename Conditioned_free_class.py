@@ -5,7 +5,7 @@ import torch.nn as nn
 import datetime
 import yaml
 from accelerate import Accelerator
-from diffusers import UNet2DConditionModel, DDPMScheduler
+from diffusers import UNet2DModel, DDPMScheduler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
@@ -41,6 +41,8 @@ def load_simple_checkpoint(checkpoint_path, model, label_emb, strict=True):
     if start_epoch < 0:
         start_epoch = 0
     return start_epoch
+
+
 def main():
     torch.manual_seed(420)
     accelerator = Accelerator()
@@ -55,17 +57,6 @@ def main():
     drop_cond_prob = training_config.get("drop_cond_prob", 0.2)
     guidance_scale = general_config.get("guidance_scale", 3.0)
     
-    lr_start = float(training_config.get("lr_start", 0.02))
-    lr_end = float(training_config.get("lr_end", 0.0001))
-    lr_start   = float(training_config.get("lr_start", 2e-2))
-    lr_min     = float(training_config.get("lr_min",   1e-4))
-    lr_factor  = float(training_config.get("lr_factor", 0.5))
-    lr_patience= int(training_config.get("lr_patience", 5))
-    lr_thresh  = float(training_config.get("lr_threshold", 1e-3))
-    lr_cooldown= int(training_config.get("lr_cooldown", 0))
-    lr_mode    = training_config.get("lr_mode", "min")  # 'min' for loss
-
-
     train_dir = "./DDR/filtered_procesed_train"
     labels_file = "./DDR/filtered_train.txt"
 
@@ -85,45 +76,50 @@ def main():
         shutil.copy2("configuration_hyper.yaml", os.path.join(folder_path, "current_configuration_hyper.yaml"))
 
     train_loader, num_classes = get_data_loader(train_dir, labels_file, image_size, batch_size)
-
-    model = UNet2DConditionModel(
-        sample_size=model_config["sample_size"],
-        in_channels=model_config["in_channels"],
-        out_channels=model_config["out_channels"],
-        layers_per_block=model_config["layers_per_block"],
-        block_out_channels=model_config["block_out_channels"],
-        down_block_types=model_config["down_block_types"],
-        up_block_types=model_config["up_block_types"],
-        norm_num_groups=model_config["norm_num_groups"],
-        dropout=model_config["dropout_scale"],
-        cross_attention_dim=model_config["cross_attention_dim"]
-    )
+    num_class_embeds = num_classes + 1 
+    
+    model = UNet2DModel(
+        sample_size=model_config["sample_size"],      
+        in_channels=model_config["in_channels"],      
+        out_channels=model_config["out_channels"],    
+        layers_per_block=model_config["layers_per_block"],       
+        block_out_channels=model_config["block_out_channels"],   
+        down_block_types=model_config["down_block_types"],       
+        up_block_types=model_config["up_block_types"],           
+        norm_num_groups=model_config["norm_num_groups"],         
+        dropout=model_config["dropout_scale"],                    
+        time_embedding_dim=model_config.get("time_embedding_dim", 512),
+        class_embed_type=model_config.get("class_embed_type", "simple"),
+        num_class_embeds=num_class_embeds,
+        attention_head_dim=model_config.get("attention_head_dim", 8),
+)
 
     noise_scheduler = DDPMScheduler(
-        num_train_timesteps=training_config["diff_time_step"],
-        beta_schedule=training_config["beta_scheduler"],
+        num_train_timesteps=training_config["diff_time_step"],   # 1000
+        beta_schedule=training_config["beta_scheduler"],         # 'linear'
+        beta_start=training_config.get("beta_start", 1e-4),
+        beta_end=training_config.get("beta_end", 2e-2),
+        prediction_type="epsilon",
     )
 
-    emb_dim = model_config["cross_attention_dim"]
-    label_emb = nn.Embedding(num_classes, emb_dim)
-    
+    label_emb = None
     start_epoch = 0
     resume_path = 0 #"./TraniOutputs/diffusion_model-2025-08-04-08-37/ckpt_epoch_999.pt"
     if resume_path and os.path.isfile(resume_path):
-        start_epoch = load_simple_checkpoint(resume_path, model, label_emb, strict=True)
-        print(f"Loaded weights from {resume_path}. Resuming at epoch {start_epoch}.")
+        ckpt = torch.load(resume_path, map_location="cpu")
+        model_sd = ckpt.get("model_state_dict") or ckpt.get("model") or ckpt["model_state_dict"]
+        model.load_state_dict(_strip_module_prefix(model_sd), strict=True)
+        start_epoch = int(ckpt.get("epoch", -1)) + 1
     else:
         print("No resume_path provided or file not found; starting fresh.")
-
-    # optimizer = torch.optim.Adam(
-    #     list(model.parameters()) + list(label_emb.parameters()),
-    #     lr=learning_rate
-    # )
     
-    optimizer = torch.optim.SGD(
-    list(model.parameters()) + list(label_emb.parameters()),
-    lr=lr_start,
-    momentum=0.9
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=learning_rate,        
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=0.01,
+        amsgrad=False,
 )
     total_params = sum(p.numel() for p in model.parameters()) + sum(p.numel() for p in label_emb.parameters())
     print(f"Total parameters (model + label_emb): {total_params}")
@@ -131,48 +127,11 @@ def main():
     with open(f"{folder_path}/epoch_times.txt", "w") as f:
         f.write(f"Trainable Param: {total_params}\n")
 
-    model, label_emb, optimizer, train_loader = accelerator.prepare(
-        model, label_emb, optimizer, train_loader
-    )
+    objects = [model, optimizer, train_loader]
+    model, optimizer, train_loader = accelerator.prepare(*objects)
     
-    steps_per_epoch = len(train_loader)
-    if steps_per_epoch == 0:
-        raise RuntimeError("DataLoader has zero length; cannot build LR schedule.")
-    total_steps = num_epochs * steps_per_epoch
-    start_step = start_epoch * steps_per_epoch
-
-    if lr_start <= 0:
-        raise ValueError("training.lr_start must be > 0 for LambdaLR to work correctly.")
-
-    def _linear_lr_lambda(current_step: int):
-      
-        s = min(current_step, total_steps)
-        t = s / float(total_steps) if total_steps > 0 else 1.0
-        lr_now = lr_start + (lr_end - lr_start) * t
-
-        return lr_now / lr_start
-
-    plateau_scheduler = ReduceLROnPlateau(
-        optimizer,
-        mode=lr_mode,                # 'min' if you pass a loss
-        factor=lr_factor,            # LR_new = LR * factor
-        patience=lr_patience,
-        threshold=lr_thresh,
-        threshold_mode="rel",        # relative improvement
-        cooldown=lr_cooldown,
-        min_lr=lr_min,
-        # verbose=True                 # prints reductions
-    )
-
-    scheduler = LambdaLR(
-        optimizer,
-        lr_lambda=_linear_lr_lambda,
-        last_epoch=start_step - 1  # so that step= start_step gives the right lr
-    )
-
     train_model(
         model,
-        label_emb,
         train_loader,
         optimizer,
         noise_scheduler,
@@ -183,9 +142,9 @@ def main():
         image_size,
         num_classes,
         guidance_scale,
-        lr_scheduler=None, 
-        start_epoch=0
-    )
+        start_epoch=0,
+        use_null_class=True,   # <-- must match num_class_embeds above
+)
 
 if __name__ == "__main__":
     main()
